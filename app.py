@@ -44,18 +44,10 @@ def index():
             filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
             file.save(filepath)
             
-            # Get model and API key from the form
-            model = request.form.get('model')
-            api_key = request.form.get('api_key')
+            # Get model configuration from the form
+            model_config = get_model_config_from_form(request.form)
             
-            # If model is 'custom', get the custom model name
-            if model == 'custom':
-                model = request.form.get('custom_model')
-                if not model:
-                    flash('Please enter a custom model name')
-                    return redirect(request.url)
-            
-            if not api_key:
+            if not model_config.get('api_key'):
                 flash('Please enter an API key')
                 return redirect(request.url)
             
@@ -78,24 +70,12 @@ def index():
             
             # Process the CSV with AI scoring
             try:
-                # Define which models support structured output
-                structured_output_models = [
-                    "gpt-3.5-turbo", "gpt-4o", 
-                    "claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229",
-                    "gemini-1.5-pro", "gemini-1.5-flash-preview"
-                ]
-                
-                # Check if the selected model supports structured output
-                supports_json_output = model in structured_output_models
-                
-                # Process the CSV with AI scoring
+                # Process the CSV with the selected model
                 results_data = process_csv_with_ai(
                     filepath, 
                     scoring_sections, 
                     int(name_header_index),
-                    model,
-                    api_key,
-                    supports_json_output
+                    model_config
                 )
                 
                 # Store results in session for the results page
@@ -113,6 +93,31 @@ def index():
     
     # GET request - render the upload form
     return render_template('index.html')
+
+def get_model_config_from_form(form_data):
+    """
+    Extract model configuration from form data.
+    
+    Args:
+        form_data: The form data from the request
+        
+    Returns:
+        dict: The model configuration
+    """
+    model_type = form_data.get('model_type', 'default')
+    model_config = {
+        'model_type': model_type
+    }
+    
+    if model_type == 'default':
+        model_config['model'] = form_data.get('default_model', 'openai/gpt-4o')
+        model_config['api_key'] = form_data.get('api_key', '')
+    else:  # custom
+        model_config['model'] = form_data.get('custom_model_name', '')
+        model_config['api_key'] = form_data.get('custom_api_key', '')
+        model_config['api_base'] = form_data.get('custom_api_base', '')
+    
+    return model_config
 
 @app.route('/preview_headers', methods=['POST'])
 def preview_headers():

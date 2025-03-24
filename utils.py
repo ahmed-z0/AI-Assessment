@@ -2,28 +2,26 @@ import os
 import pandas as pd
 import re
 import json
-from litellm import completion, get_supported_openai_params
+from litellm import completion
+import litellm
 from dotenv import load_dotenv
 
-# Load environment variables (for API keys)
+# Load environment variables
 load_dotenv()
 
-def process_csv_with_ai(csv_filepath, scoring_sections, name_header_index, model, api_key, supports_json_output):
+def process_csv_with_ai(csv_filepath, scoring_sections, name_header_index, model_config):
     """
-    Process a CSV file with AI scoring based on the defined scoring sections.
+    Process a CSV file with AI scoring based on the defined scoring sections using LiteLLM.
     
     Args:
         csv_filepath (str): Path to the input CSV file
         scoring_sections (list): List of dictionaries containing scoring configuration
-            Each dict should have:
-            - prompt: The prompt template with {index} placeholders
-            - output_column: The column name where scores will be written
-            - max_marks: Maximum marks for this section
-            - section_name: Name of the scoring section
         name_header_index (int): Index of the column containing candidate names
-        model (str): The AI model to use
-        api_key (str): API key for the model provider
-        supports_json_output (bool): Whether the model supports structured output
+        model_config (dict): Configuration for the AI model including:
+            - model_type: 'default' or 'custom'
+            - model: Model identifier string
+            - api_key: API key for the service
+            - api_base: (Optional) Base URL for custom API endpoints
     
     Returns:
         list: List of dictionaries containing results for each candidate
@@ -31,6 +29,12 @@ def process_csv_with_ai(csv_filepath, scoring_sections, name_header_index, model
     # Read the CSV file
     df = pd.read_csv(csv_filepath)
     headers = df.columns.tolist()
+    
+    # Configure LiteLLM based on the model type
+    configure_litellm(model_config)
+    
+    # Get the model string to use with LiteLLM
+    model_string = model_config['model']
     
     # Prepare results data structure
     results = []
@@ -50,8 +54,8 @@ def process_csv_with_ai(csv_filepath, scoring_sections, name_header_index, model
             # Replace placeholders in the prompt with actual values from the row
             prompt = replace_placeholders_by_index(prompt_template, row, headers)
             
-            # Process with AI model
-            score = get_ai_score(prompt, max_marks, model, api_key, supports_json_output)
+            # Process with AI model via LiteLLM
+            score = get_ai_score(prompt, max_marks, model_string)
             
             # Add section result
             candidate_results['sections'].append({
@@ -63,6 +67,24 @@ def process_csv_with_ai(csv_filepath, scoring_sections, name_header_index, model
         results.append(candidate_results)
     
     return results
+
+def configure_litellm(model_config):
+    """
+    Configure LiteLLM based on the model configuration.
+    
+    Args:
+        model_config (dict): Model configuration including type, model name, API key, etc.
+    """
+    # Reset any previous configuration
+    litellm.api_key = None
+    litellm.api_base = None
+    
+    # Set the API key directly on LiteLLM
+    litellm.api_key = model_config.get('api_key')
+    
+    # If it's a custom model with an API base, set that too
+    if model_config.get('model_type') == 'custom' and model_config.get('api_base'):
+        litellm.api_base = model_config.get('api_base')
 
 def replace_placeholders_by_index(prompt_template, row, headers):
     """
@@ -93,117 +115,84 @@ def replace_placeholders_by_index(prompt_template, row, headers):
     
     return prompt
 
-def get_ai_score(prompt, max_marks, model, api_key, supports_json_output):
+def get_ai_score(prompt, max_marks, model):
     """
-    Get a score for the given prompt using an AI model.
+    Get a score for the given prompt using LiteLLM.
     
     Args:
         prompt (str): The prompt to send to the AI model
         max_marks (int or float): Maximum marks for this section
-        model (str): The AI model to use
-        api_key (str): API key for the model provider
-        supports_json_output (bool): Whether the model supports structured output
+        model (str): The model identifier to use with LiteLLM
     
     Returns:
         float: The score assigned by the AI model
     """
     try:
-        # Set the appropriate provider based on model prefix
-        provider = None
-        
-        # Determine the provider based on the model name
-        if model.startswith('gpt-'):
-            os.environ["OPENAI_API_KEY"] = api_key
-            provider = "openai"
-        elif model.startswith('claude-'):
-            os.environ["ANTHROPIC_API_KEY"] = api_key
-            provider = "anthropic"
-        elif model.startswith('gemini-'):
-            os.environ["GOOGLE_API_KEY"] = api_key
-            provider = "google"
-        else:
-            # Set as custom model/provider
-            os.environ["OPENAI_API_KEY"] = api_key  # Default to OpenAI
-        
-        if supports_json_output:
-            # Use structured output format for supported models
-            return get_structured_score(prompt, max_marks, model, provider)
-        else:
-            # Use traditional prompting for models without structured output support
-            return get_prompt_score(prompt, max_marks, model, provider)
-    
+        # First try with structured JSON output
+        return get_structured_score(prompt, max_marks, model)
     except Exception as e:
-        print(f"Error calling AI model: {str(e)}")
-        return 0  # Return 0 in case of errors
+        print(f"Error with structured scoring: {str(e)}")
+        # Fall back to text-based scoring if JSON parsing fails
+        return get_prompt_score(prompt, max_marks, model)
 
-def get_structured_score(prompt, max_marks, model, provider=None):
+def get_structured_score(prompt, max_marks, model):
     """
-    Get a score using structured output JSON format.
+    Get a score using JSON structured output.
     
     Args:
         prompt (str): The prompt to send to the AI model
         max_marks (int or float): Maximum marks for this section
-        model (str): The AI model to use
-        provider (str, optional): The provider to use (openai, anthropic, etc.)
+        model (str): The model identifier to use with LiteLLM
     
     Returns:
         float: The score assigned by the AI model
     """
-    # Define the JSON schema for the response
-    json_schema = {
-        "type": "object",
-        "properties": {
-            "score": {
-                "type": "number",
-                "description": f"A score between 0 and {max_marks} based on the assessment criteria"
-            }
-        },
-        "required": ["score"]
-    }
-    
     # Construct the system and user messages
     system_message = f"""You are an assessment AI. Your task is to evaluate answers based on prompts and provide a score between 0 and {max_marks}.
     Your evaluation should be fair, consistent, and based on the content of the answer.
-    You must return a JSON object with a 'score' property containing only the numeric score."""
+    You must return a JSON object with a 'score' property containing only the numeric score. For example: {{"score": 8.5}}"""
     
     user_message = f"""Based on the following input, provide a score between 0 and {max_marks}:
     
     {prompt}"""
     
-    # Call the AI model using litellm with structured output format
-    response = completion(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message}
-        ],
-        response_format={"type": "json_schema", "schema": json_schema},
-        temperature=0.3,
-        max_tokens=100,
-        custom_llm_provider=provider
-    )
-    
-    # Extract the JSON result
     try:
+        # Call the model with JSON object format
+        response = completion(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.3,
+            max_tokens=100
+        )
+        
+        # Extract the JSON result
         result = json.loads(response.choices[0].message.content)
         score = result.get('score', 0)
         
         # Ensure the score is within the valid range
         score = max(0, min(float(max_marks), score))
         return round(score, 2)  # Round to 2 decimal places
-    except (json.JSONDecodeError, AttributeError, KeyError):
-        # If there's an issue with the JSON response, fall back to prompt-based scoring
-        return get_prompt_score(prompt, max_marks, model, provider)
+    except (json.JSONDecodeError, AttributeError, KeyError) as e:
+        print(f"Error parsing JSON response: {str(e)}")
+        # If there's an issue with the JSON response, try to extract score from text
+        return extract_score_from_text(response.choices[0].message.content, max_marks)
+    except Exception as e:
+        # For all other errors, fall back to prompt-based scoring
+        print(f"Error with structured output: {str(e)}")
+        return get_prompt_score(prompt, max_marks, model)
 
-def get_prompt_score(prompt, max_marks, model, provider=None):
+def get_prompt_score(prompt, max_marks, model):
     """
     Get a score using traditional prompt engineering.
     
     Args:
         prompt (str): The prompt to send to the AI model
         max_marks (int or float): Maximum marks for this section
-        model (str): The AI model to use
-        provider (str, optional): The provider to use (openai, anthropic, etc.)
+        model (str): The model identifier to use with LiteLLM
     
     Returns:
         float: The score assigned by the AI model
@@ -218,27 +207,42 @@ def get_prompt_score(prompt, max_marks, model, provider=None):
     Score (0-{max_marks}):
     """
     
-    # Call the AI model using litellm
-    response = completion(
-        model=model,
-        messages=[{"role": "user", "content": full_prompt}],
-        temperature=0.3,  # Lower temperature for more consistent scoring
-        max_tokens=10,    # We only need a short response
-        custom_llm_provider=provider
-    )
-    
-    # Extract the score from the response
-    score_text = response.choices[0].message.content.strip()
-    
-    # Try to convert to float
     try:
-        score = float(score_text)
+        # Call the AI model
+        response = completion(
+            model=model,
+            messages=[{"role": "user", "content": full_prompt}],
+            temperature=0.3,  # Lower temperature for more consistent scoring
+            max_tokens=10     # We only need a short response
+        )
+        
+        # Extract the score from the response
+        score_text = response.choices[0].message.content.strip()
+        return extract_score_from_text(score_text, max_marks)
+    except Exception as e:
+        print(f"Error with prompt-based scoring: {str(e)}")
+        return 0  # Return 0 in case of errors
+
+def extract_score_from_text(text, max_marks):
+    """
+    Extract a numeric score from text response.
+    
+    Args:
+        text (str): The text to extract a score from
+        max_marks (int or float): Maximum marks for this section
+    
+    Returns:
+        float: The extracted score
+    """
+    # Try to convert to float directly
+    try:
+        score = float(text)
         # Ensure the score is within the valid range
         score = max(0, min(float(max_marks), score))
         return round(score, 2)  # Round to 2 decimal places
     except ValueError:
-        # If conversion fails, look for digits in the response
-        digits = re.findall(r'\d+\.?\d*', score_text)
+        # If direct conversion fails, look for digits in the response
+        digits = re.findall(r'\d+\.?\d*', text)
         if digits:
             try:
                 score = float(digits[0])
