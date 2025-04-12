@@ -4,10 +4,17 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from werkzeug.utils import secure_filename
 import json
 from utils import process_csv_with_ai
+from flask_session import Session
 
 # Initialize Flask app
 app = Flask(__name__)
 app.secret_key = os.urandom(24)  # Secret key for session management
+# Configure server-side session storage
+app.config["SESSION_PERMANENT"] = False
+app.config["SESSION_TYPE"] = "filesystem"  # Alternatives: "redis", "memcached", etc.
+
+# Initialize the extension
+Session(app)
 
 # Configure file upload settings
 UPLOAD_FOLDER = 'uploads'
