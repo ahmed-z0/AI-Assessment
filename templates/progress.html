@@ -88,6 +88,23 @@
                 d="M5 13l4 4L19 7"
               />
             </svg>
+
+            <!-- Error icon (hidden by default) -->
+            <svg
+              id="error-icon"
+              class="hidden h-20 w-20 text-red-500"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
           </div>
           <h3 id="status-title" class="text-xl font-bold text-gray-800 mb-3">
             Processing with AI
@@ -112,20 +129,45 @@
           </div>
         </div>
 
-        <div id="completion-actions" class="hidden text-center">
-          <a
-            href="{{ url_for('results') }}"
-            class="inline-block bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition duration-150"
-          >
-            View Results
-          </a>
+        <!-- Action buttons -->
+        <div id="action-buttons" class="space-y-3">
+          <!-- Completion actions (hidden by default) -->
+          <div id="completion-actions" class="hidden text-center">
+            <a
+              id="results-link"
+              href="#"
+              class="inline-block bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition duration-150"
+            >
+              View Results
+            </a>
+          </div>
+
+          <!-- Error actions (hidden by default) -->
+          <div id="error-actions" class="hidden text-center">
+            <a
+              href="{{ url_for('index') }}"
+              class="inline-block bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition duration-150"
+            >
+              Start Over
+            </a>
+          </div>
+
+          <!-- Cancel button (visible during processing) -->
+          <div id="cancel-action" class="text-center">
+            <a
+              href="{{ url_for('index') }}"
+              class="inline-block bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-lg text-sm transition duration-150"
+            >
+              Cancel
+            </a>
+          </div>
         </div>
       </div>
     </div>
 
     <script>
       $(document).ready(function () {
-        // Get task ID from the template
+        // Get task ID from the URL (from the template)
         const taskId = "{{ task_id }}";
 
         // Function to update the progress UI
@@ -146,6 +188,21 @@
               "Your AI assessment has been completed successfully."
             );
             $("#completion-actions").removeClass("hidden");
+            $("#cancel-action").addClass("hidden");
+
+            // Set the results link
+            $("#results-link").attr("href", data.result_url);
+          }
+          // If task failed, show error UI
+          else if (data.state === "FAILURE") {
+            $("#processing-spinner").addClass("hidden");
+            $("#error-icon").removeClass("hidden");
+            $("#status-title").text("Processing Failed");
+            $("#status-description").text(
+              "There was an error processing your assessment. Please try again."
+            );
+            $("#error-actions").removeClass("hidden");
+            $("#cancel-action").addClass("hidden");
           }
         }
 

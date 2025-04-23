@@ -75,9 +75,11 @@ def index():
             
             # Submit the job to the Celery task queue instead of processing synchronously
             try:
-                # Store file information in session for later retrieval
+                # Read CSV headers for later retrieval
                 df = pd.read_csv(filepath)
                 headers = df.columns.tolist()
+                
+                # Store headers in a redis cache or db (simplified approach: using session for headers only)
                 session['headers'] = headers
                 
                 # Submit the task to Celery
@@ -88,11 +90,8 @@ def index():
                     model_config
                 )
                 
-                # Store the task ID in the session
-                session['task_id'] = task.id
-                
-                # Redirect to the progress page
-                return redirect(url_for('task_progress'))
+                # Redirect to the progress page with task_id as URL parameter
+                return redirect(url_for('task_progress', task_id=task.id))
                 
             except Exception as e:
                 flash(f'Error starting processing: {str(e)}')
@@ -104,12 +103,17 @@ def index():
     # GET request - render the upload form
     return render_template('index.html')
 
-@app.route('/task_progress')
-def task_progress():
+@app.route('/progress/<task_id>')
+def task_progress(task_id):
     """Show a page that monitors the task progress via AJAX"""
-    task_id = session.get('task_id')
     if not task_id:
-        flash('No task in progress. Please start a new assessment.')
+        flash('No task ID provided. Please start a new assessment.')
+        return redirect(url_for('index'))
+    
+    # Verify task exists
+    task = process_csv_task.AsyncResult(task_id)
+    if not task:
+        flash('Invalid task ID. Please start a new assessment.')
         return redirect(url_for('index'))
     
     return render_template('progress.html', task_id=task_id)
@@ -144,11 +148,9 @@ def task_status(task_id):
             'status': 'Complete!',
             'current': 100,
             'total': 100,
-            'percent': 100
+            'percent': 100,
+            'result_url': url_for('results', task_id=task_id)
         }
-        
-        # If task is complete, store results in session
-        session['results'] = task.result.get('results', [])
     else:
         # Something unexpected happened
         response = {
@@ -214,17 +216,25 @@ def preview_headers():
     else:
         return json.dumps({'error': 'File type not allowed. Please upload a CSV file.'})
 
-@app.route('/results')
-def results():
-    # Get results from session
-    results_data = session.get('results')
-    headers = session.get('headers')
+@app.route('/results/<task_id>')
+def results(task_id):
+    # Get task result directly from Celery
+    task = process_csv_task.AsyncResult(task_id)
+    
+    if not task or task.state != 'SUCCESS':
+        flash('Results not available. Please wait for processing to complete.')
+        return redirect(url_for('task_progress', task_id=task_id))
+    
+    # Get results from the task
+    results_data = task.result.get('results', [])
+    # Get headers from session (this is one piece of data we're still using from session)
+    headers = session.get('headers', [])
     
     if not results_data:
-        flash('No results available. Please process a CSV file first.')
+        flash('No results available. Processing may have failed.')
         return redirect(url_for('index'))
     
-    return render_template('results.html', results=results_data, headers=headers)
+    return render_template('results.html', results=results_data, headers=headers, task_id=task_id)
 
 if __name__ == '__main__':
     app.run(debug=True)
