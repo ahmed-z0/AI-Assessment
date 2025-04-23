@@ -2,9 +2,12 @@ import os
 import pandas as pd
 import re
 import json
+import asyncio
+import concurrent.futures
 from litellm import completion
 import litellm
 from dotenv import load_dotenv
+from functools import partial
 
 # Load environment variables
 load_dotenv()
@@ -36,10 +39,17 @@ def process_csv_with_ai(csv_filepath, scoring_sections, name_header_index, model
     # Get the model string to use with LiteLLM
     model_string = model_config['model']
     
-    # Prepare results data structure
+    # For small datasets (less than 20 rows), use the synchronous approach
+    if len(df) < 20:
+        return process_csv_sync(df, headers, name_header_index, scoring_sections, model_string, model_config)
+    
+    # For larger datasets, use the concurrent approach
+    return process_csv_concurrent(df, headers, name_header_index, scoring_sections, model_string, model_config)
+
+def process_csv_sync(df, headers, name_header_index, scoring_sections, model_string, model_config):
+    """Synchronous processing for small datasets"""
     results = []
     
-    # Process each row with the defined scoring sections
     for index, row in df.iterrows():
         candidate_results = {
             'name': row[headers[name_header_index]],
@@ -49,7 +59,7 @@ def process_csv_with_ai(csv_filepath, scoring_sections, name_header_index, model
         for section in scoring_sections:
             prompt_template = section['prompt']
             section_name = section.get('section_name', 'Unnamed Section')
-            max_marks = section.get('max_marks', 10)  # Default to 10 if not specified
+            max_marks = section.get('max_marks', 10)
             
             # Replace placeholders in the prompt with actual values from the row
             prompt = replace_placeholders_by_index(prompt_template, row, headers)
@@ -67,6 +77,78 @@ def process_csv_with_ai(csv_filepath, scoring_sections, name_header_index, model
         results.append(candidate_results)
     
     return results
+
+def process_csv_concurrent(df, headers, name_header_index, scoring_sections, model_string, model_config):
+    """Concurrent processing for larger datasets using ThreadPoolExecutor"""
+    results = []
+    
+    # Create a partial function with fixed parameters
+    process_row_func = partial(
+        process_single_row,
+        headers=headers,
+        name_header_index=name_header_index,
+        scoring_sections=scoring_sections,
+        model_string=model_string,
+        model_config=model_config
+    )
+    
+    # Process rows concurrently using ThreadPoolExecutor
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, len(df))) as executor:
+        # Submit all rows for processing
+        future_to_row = {executor.submit(process_row_func, row): idx for idx, row in df.iterrows()}
+        
+        # Collect results as they complete
+        for future in concurrent.futures.as_completed(future_to_row):
+            try:
+                result = future.result()
+                results.append(result)
+            except Exception as exc:
+                print(f'Row processing generated an exception: {exc}')
+                # Add a placeholder for failed processing
+                idx = future_to_row[future]
+                results.append({
+                    'name': df.iloc[idx][headers[name_header_index]],
+                    'sections': [{'section_name': section['section_name'], 
+                                  'score': 0, 
+                                  'max_marks': section['max_marks']} 
+                                for section in scoring_sections],
+                    'error': str(exc)
+                })
+    
+    # Sort results by original order
+    results.sort(key=lambda x: df[df[headers[name_header_index]] == x['name']].index[0])
+    
+    return results
+
+def process_single_row(row, headers, name_header_index, scoring_sections, model_string, model_config):
+    """Process a single row (candidate) with AI scoring"""
+    candidate_results = {
+        'name': row[headers[name_header_index]],
+        'sections': []
+    }
+    
+    # Configure LiteLLM for this thread
+    configure_litellm(model_config)
+    
+    for section in scoring_sections:
+        prompt_template = section['prompt']
+        section_name = section.get('section_name', 'Unnamed Section')
+        max_marks = section.get('max_marks', 10)
+        
+        # Replace placeholders in the prompt with actual values from the row
+        prompt = replace_placeholders_by_index(prompt_template, row, headers)
+        
+        # Process with AI model via LiteLLM
+        score = get_ai_score(prompt, max_marks, model_string)
+        
+        # Add section result
+        candidate_results['sections'].append({
+            'section_name': section_name,
+            'score': score,
+            'max_marks': max_marks
+        })
+    
+    return candidate_results
 
 def configure_litellm(model_config):
     """

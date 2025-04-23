@@ -4,3 +4,7 @@ Flask-Session
 pandas
 litellm
 python-dotenv
+celery
+redis
+flask-socketio
+aiohttp

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Assessment - Processing</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <style>
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+        50% {
+          opacity: 0.8;
+          transform: scale(0.95);
+        }
+      }
+
+      @keyframes shimmer {
+        0% {
+          background-position: -468px 0;
+        }
+        100% {
+          background-position: 468px 0;
+        }
+      }
+
+      .pulse {
+        animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+      }
+
+      #progress-bar {
+        background: linear-gradient(to right, #818cf8, #4f46e5, #818cf8);
+        background-size: 200% 100%;
+        animation: shimmer 2s infinite linear;
+      }
+    </style>
+  </head>
+  <body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+      <header class="mb-8 text-center">
+        <h1 class="text-3xl font-bold text-indigo-700">AI Assessment Tool</h1>
+        <p class="text-gray-600 mt-2">Processing your CSV file with AI...</p>
+      </header>
+
+      <div class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-md">
+        <div class="flex flex-col items-center mb-6">
+          <div class="loader mb-6 relative">
+            <svg
+              id="processing-spinner"
+              class="animate-spin h-20 w-20 text-indigo-600"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle
+                class="opacity-25"
+                cx="12"
+                cy="12"
+                r="10"
+                stroke="currentColor"
+                stroke-width="4"
+              ></circle>
+              <path
+                class="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              ></path>
+            </svg>
+
+            <!-- Success checkmark (hidden by default) -->
+            <svg
+              id="success-checkmark"
+              class="hidden h-20 w-20 text-green-500"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          </div>
+          <h3 id="status-title" class="text-xl font-bold text-gray-800 mb-3">
+            Processing with AI
+          </h3>
+          <p id="status-description" class="text-gray-600 text-center mb-6">
+            This may take a few minutes depending on the size of your CSV and
+            the complexity of your assessment criteria.
+          </p>
+        </div>
+
+        <div class="mb-6">
+          <div class="w-full bg-gray-200 rounded-full h-3 mb-3 overflow-hidden">
+            <div
+              id="progress-bar"
+              class="bg-indigo-600 h-3 rounded-full transition-all duration-500 ease-out"
+              style="width: 0%"
+            ></div>
+          </div>
+          <div class="flex justify-between text-sm text-gray-500">
+            <span id="progress-text">Starting...</span>
+            <span id="progress-percentage">0%</span>
+          </div>
+        </div>
+
+        <div id="completion-actions" class="hidden text-center">
+          <a
+            href="{{ url_for('results') }}"
+            class="inline-block bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition duration-150"
+          >
+            View Results
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      $(document).ready(function () {
+        // Get task ID from the template
+        const taskId = "{{ task_id }}";
+
+        // Function to update the progress UI
+        function updateProgress(data) {
+          // Update progress bar
+          $("#progress-bar").css("width", data.percent + "%");
+          $("#progress-percentage").text(data.percent + "%");
+
+          // Update status text
+          $("#progress-text").text(data.status);
+
+          // If task is complete, show completion UI
+          if (data.state === "SUCCESS") {
+            $("#processing-spinner").addClass("hidden");
+            $("#success-checkmark").removeClass("hidden");
+            $("#status-title").text("Processing Complete!");
+            $("#status-description").text(
+              "Your AI assessment has been completed successfully."
+            );
+            $("#completion-actions").removeClass("hidden");
+          }
+        }
+
+        // Function to poll task status
+        function pollStatus() {
+          $.ajax({
+            url: "/task_status/" + taskId,
+            method: "GET",
+            success: function (data) {
+              // Update UI with the latest progress
+              updateProgress(data);
+
+              // If not complete, poll again after delay
+              if (data.state !== "SUCCESS" && data.state !== "FAILURE") {
+                setTimeout(pollStatus, 2000); // Poll every 2 seconds
+              }
+            },
+            error: function () {
+              // On error, retry after longer delay
+              setTimeout(pollStatus, 5000);
+            },
+          });
+        }
+
+        // Start polling
+        pollStatus();
+      });
+    </script>
+  </body>
+</html>
