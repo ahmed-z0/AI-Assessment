@@ -81,6 +81,7 @@ def index():
                 
                 # Store headers in a redis cache or db (simplified approach: using session for headers only)
                 session['headers'] = headers
+                session['filename'] = filename
                 
                 # Submit the task to Celery
                 task = process_csv_task.delay(
